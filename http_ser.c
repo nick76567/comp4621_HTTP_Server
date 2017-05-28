@@ -117,14 +117,15 @@ void get_HTTP_header(char **element_in_first_line, char *buffer){
 	strcat(buffer, tmp_buf);
 	strcat(buffer, "\r\n");
 	//Connection
-	strcat(buffer, "\r\n\r\n");
+
+	strcat(buffer, "\r\n");
 	
 }
 
 void request_handler(int servfd, int clifd){
-	char tmp_buf, request[REQUEST_SIZE], buffer[BUFFER_SIZE];
+	char request[REQUEST_SIZE], buffer[BUFFER_SIZE];
 	char *element_in_first_line[3];
-	int i, fd;
+	int i, fd, r_bytes;
 
 
 	//Get request
@@ -141,13 +142,20 @@ void request_handler(int servfd, int clifd){
 	get_HTTP_header(element_in_first_line, buffer);
 
 	//send back client
-	write(clifd, buffer, strlen(buffer) + 1);
+	//write(clifd, buffer, strlen(buffer));
 	
 
 	fd = open(element_in_first_line[PATH], O_RDONLY);
-	while(read(fd, &tmp_buf, 1)){
+	while(1){
+		
+		r_bytes = read(fd, buffer, BUFFER_SIZE);
+		write(clifd, buffer, r_bytes + 1);
 
-		write(clifd, &tmp_buf, 1);
+		if(r_bytes <= 0) {
+			buffer[r_bytes] = '\0';
+			break;
+		}
+		
 	}
 
 	close(fd);
@@ -160,13 +168,7 @@ void request_handler(int servfd, int clifd){
 	
 }
 
-/*
-int main(){
-	int fd = open("test.txt", O_RDONLY);
-	request_handler(fd, 0);
-	return 0;
-}
-*/
+
 
 int main(){
 	int servfd, clifd;
@@ -183,8 +185,8 @@ int main(){
 	//init_servaddr(&servaddr);
 	memset(&servaddr, 0, sizeof(servaddr));
         servaddr.sin_family = AF_INET;
-        servaddr.sin_addr.s_addr = INADDR_ANY; /* IP address: 0.0.0.0 */
-        servaddr.sin_port = htons(12346);
+        servaddr.sin_addr.s_addr = INADDR_ANY; 
+        servaddr.sin_port = htons(12345);
 
 	if(bind(servfd, (struct sockaddr *)&servaddr, sizeof(struct sockaddr)) < 0){
 		printf("ERROR: bind\n");
@@ -205,9 +207,12 @@ int main(){
 		
 		request_handler(servfd, clifd);
 
-		close(servfd);
+		close(clifd);
 	}	
 	
 
 	return 0;
 }
+
+
+

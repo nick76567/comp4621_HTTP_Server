@@ -25,7 +25,7 @@ int main()
         memset(&servaddr, 0, sizeof(servaddr));
         servaddr.sin_family = AF_INET;
         servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-        servaddr.sin_port = htons(12346);
+        servaddr.sin_port = htons(12345);
 
         /* connect to the server */
         if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
@@ -33,7 +33,7 @@ int main()
         }
 
         /* constrct the request */
-        snprintf(writeline, sizeof(writeline) - 1, "GET test.html HTTP/1.1\r\n");
+        snprintf(writeline, sizeof(writeline) - 1, "GET project_web/kai2.jpg HTTP/1.1\r\n");
 
         /* send the request */
         write(sockfd, writeline, strlen(writeline));
