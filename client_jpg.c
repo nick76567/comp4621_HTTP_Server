@@ -45,6 +45,9 @@ int main()
         write(sockfd, writeline, strlen(writeline));
       
         fd = open("kai2.jpg", O_CREAT|O_RDWR, 0644);
+        if(fd < 0){
+            printf("Error in open\n");
+        }
         /* read the response */
         while (1) {        
             n = read(sockfd, recvline, BUFFER_SIZE);

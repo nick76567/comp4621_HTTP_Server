@@ -38,13 +38,16 @@ int main()
         }
 
         /* constrct the request */
-        snprintf(writeline, sizeof(writeline) - 1, "GET project_web/kai2.jpg HTTP/1.1\r\n");
+        snprintf(writeline, sizeof(writeline) - 1, "GET project_web/shownews.js HTTP/1.1\r\n");
 
       
         /* send the request */
         write(sockfd, writeline, strlen(writeline));
       
-        fd = open("kai2.jpg", O_CREAT|O_RDWR, 0644);
+        fd = open("shownews.js", O_CREAT|O_RDWR, 0644);
+        if(fd < 0){
+            printf("Error in open\n");
+        }
         /* read the response */
         while (1) {        
             n = read(sockfd, recvline, BUFFER_SIZE);
