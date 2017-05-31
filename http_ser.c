@@ -8,10 +8,11 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <zlib.h>
 
 
-#define BUFFER_SIZE		4096
-#define REQUEST_SIZE	512
+#define BUFFER_SIZE		512
+#define REQUEST_SIZE	256
 #define HTTP_PORT		80
 #define PORT            12345
 #define Q_LIMIT			16
@@ -64,36 +65,7 @@ void get_request_first_line(int clifd, char *request){
 	strcpy(request, buffer);
 }
 
-/*
-int get_request_first_line(int clifd, char *request){
-	int r_bytes = 0, n;
-	char *tmp_buf = request;
-//debug
 
-	char debug_buf[4096];
-	n = read(clifd, debug_buf, 4096);
-	debug_buf[n] = 0;
-	printf("%s\n", debug_buf);
-
-	while(1){
-		//debug
-		printf("test\n");
-
-		read(clifd, tmp_buf++, 1);
-
-		//debug
-		printf("test2\n");
-
-		if(request[r_bytes++] == '\r') break;
-	}
-//debug
-	
-	request[r_bytes] = 0;
-	printf("%s\n", request);
-	
-	return r_bytes;
-}
-*/
 void pharsing_request_first_line(char *request, char **element_in_first_line){
 	char *token;
 	int i = 0;
@@ -136,10 +108,12 @@ int check_content_type(char *fname, struct extensions *exts){
 	return i;
 }
 
-void get_content_length(char *fname, char *tmp_buf){
+int get_content_length(char *fname, char *tmp_buf){
 	struct stat st;
 	stat(fname, &st);
-	sprintf(tmp_buf, "%ld", st.st_size);
+	if(tmp_buf != NULL)
+		sprintf(tmp_buf, "%ld", st.st_size);
+	return st.st_size;
 }
 
 void get_HTTP_header(char **element_in_first_line, char *buffer){
@@ -168,13 +142,56 @@ void get_HTTP_header(char **element_in_first_line, char *buffer){
 	//Connection
 	strcat(buffer, "Keep-alive: timeout=15, max=100\r\n");
 
+	//gzip
+	strcat(buffer, "Content-Encoding: gzip\r\n");
+
 	strcat(buffer, "\r\n");
 }
 
+int get_compressed_file(int r_bytes, char *uncompressed_buffer, char* fname){
+	gzFile output = gzopen(fname, "wb");
+	if(output == NULL){
+		printf("Error in gzopen.\n");
+		return -1;
+	}
+
+	if(gzwrite(output, uncompressed_buffer, r_bytes) == 0 && r_bytes != 0){
+		printf("Error in gzwrite.\n");
+		return -1;
+	}
+
+	gzclose(output);
+	return 0;
+}
+
+int get_compressed_buffer(int r_bytes, char *uncompressed_buffer, char *compressed_buffer){
+	int fd, new_r_bytes;
+	char gz_fname[] = "tmp.gz";
+
+	if(get_compressed_file(r_bytes, uncompressed_buffer, gz_fname) != 0){
+		return -1;
+	}
+
+	if((fd = open(gz_fname, O_RDONLY)) < 0){
+		printf("Error in get_compressed_buffer: open\n");
+		return -1;
+	}
+
+	if((new_r_bytes = read(fd, compressed_buffer, r_bytes)) < 0){
+		printf("Error in get_compressed_file: open");
+		return -1;
+	}
+
+	close(fd);
+	remove(gz_fname);
+	return new_r_bytes;
+}
+
 void *request_handler(void *arg){
-	char request[REQUEST_SIZE], buffer[BUFFER_SIZE];
+	char request[REQUEST_SIZE], header_buffer[BUFFER_SIZE];
+	char *buffer, *compressed_buffer;
 	char *element_in_first_line[3];
-	int i, fd, r_bytes;
+	int i, fd, r_bytes, compressed_r_bytes, fsize;
 	struct Socket_fd socket_fd;
 	socket_fd.servfd = ((struct Socket_fd*)arg)->servfd;
 	socket_fd.clifd = ((struct Socket_fd*)arg)->clifd;
@@ -191,33 +208,44 @@ void *request_handler(void *arg){
 
 
 	//do sth based on process result
-	get_HTTP_header(element_in_first_line, buffer);
+	get_HTTP_header(element_in_first_line, header_buffer);
 
 	//debug
-	printf("%s\n", buffer);
+	printf("%s\n", header_buffer);
 
 	//send back client
 	//if(check_content_type(element_in_first_line[PATH], exts) == 9)
-		write(socket_fd.clifd, buffer, strlen(buffer));
+	write(socket_fd.clifd, header_buffer, strlen(header_buffer));
 
 	fd = open(element_in_first_line[PATH], O_RDONLY);
 
+	fsize = get_content_length(element_in_first_line[PATH], NULL);
+	buffer = malloc(sizeof(char) * fsize);
+	compressed_buffer = malloc(sizeof(char) * fsize);
+
 	//debug
 /*
+	printf("fsize: %d\n", fsize);
+
 	debug_fname = strrchr(element_in_first_line[PATH], '/');
 	printf("debug_fname: %s\n", ++debug_fname);
 	debug_fd = open(debug_fname, O_CREAT|O_RDWR, 0644);
 */
 	while(1){
-		
-		r_bytes = read(fd, buffer, BUFFER_SIZE);	
+
+		r_bytes = read(fd, buffer, fsize);	
+
+		if(get_compressed_buffer(r_bytes, buffer, compressed_buffer) < 0){
+			exit(0);
+		}
+
 		//debug
-		//write(debug_fd, buffer, r_bytes);
+		//write(debug_fd, compressed_buffer, compressed_r_bytes);
 
 		if(r_bytes <= 0) {
 			break;
 		}else{
-			write(socket_fd.clifd, buffer, r_bytes);
+			write(socket_fd.clifd, compressed_buffer, r_bytes);
 		}
 		
 	}
@@ -228,6 +256,8 @@ void *request_handler(void *arg){
 	close(fd);
 
 	free(arg);
+	free(buffer);
+	free(compressed_buffer);
 	for(i = 0; i < 3; i++){
 		free(element_in_first_line[i]);
 	}
@@ -284,7 +314,3 @@ int main(){
 	
 	return 0;
 }
-
-
-
-
