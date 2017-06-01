@@ -50,7 +50,7 @@ struct Socket_fd{
 void get_request_first_line(int clifd, char *request){
 	char buffer[REQUEST_SIZE], *token;	
 
-	if(read(clifd, buffer, REQUEST_SIZE) <= 0){
+	if(read(clifd, buffer, REQUEST_SIZE) < 0){
 		printf("Error in read request\n");
 		exit(0);
 	}
@@ -60,9 +60,15 @@ void get_request_first_line(int clifd, char *request){
 
 	token = strtok(buffer, "\n");
 	strcpy(buffer, token);
-	buffer[strlen(token)] = '\0';
+	buffer[strlen(token) - 1] = '\0';
+
+	//debug
+	printf("buffer: %s\n", buffer);
 
 	strcpy(request, buffer);
+
+	//debug
+	printf("request: %s\n", request);
 }
 
 
@@ -73,13 +79,14 @@ void pharsing_request_first_line(char *request, char **element_in_first_line){
 	token = strtok(request, " ");
 
 	while(token != NULL){
-		element_in_first_line[i] = malloc((strlen(token) + 1) * sizeof(char));
+		element_in_first_line[i] = malloc((strlen(token)) * sizeof(char));
 		
 		strcpy(element_in_first_line[i++], token);
 		token = strtok(NULL, " ");
 	}
 
-	element_in_first_line[HTTP_VER][strlen(element_in_first_line[HTTP_VER]) - 1] = '\0';
+	//debug
+	printf("pharsing: %s\n", element_in_first_line[HTTP_VER]);
 }
 
 int check_request_status(char **element_in_first_line){
@@ -140,7 +147,7 @@ void get_HTTP_header(char **element_in_first_line, char *buffer){
 	strcat(buffer, "\r\n");
 
 	//Connection
-	strcat(buffer, "Keep-alive: timeout=15, max=100\r\n");
+	strcat(buffer, "Connection: keep-alive\r\n");
 
 	//gzip
 	strcat(buffer, "Content-Encoding: gzip\r\n");
@@ -177,8 +184,11 @@ int get_compressed_buffer(int r_bytes, char *uncompressed_buffer, char *compress
 		return -1;
 	}
 
+	//debug
+	printf("r_bytes %d\n", r_bytes);
+
 	if((new_r_bytes = read(fd, compressed_buffer, r_bytes)) < 0){
-		printf("Error in get_compressed_file: open");
+		printf("Error in get_compressed_file: open %d", new_r_bytes);
 		return -1;
 	}
 
@@ -206,7 +216,6 @@ void *request_handler(void *arg){
 	//process request
 	pharsing_request_first_line(request, element_in_first_line);
 
-
 	//do sth based on process result
 	get_HTTP_header(element_in_first_line, header_buffer);
 
@@ -214,7 +223,7 @@ void *request_handler(void *arg){
 	printf("%s\n", header_buffer);
 
 	//send back client
-	//if(check_content_type(element_in_first_line[PATH], exts) == 9)
+	//if(check_content_type(element_in_first_line[PATH], exts) != 0)
 	write(socket_fd.clifd, header_buffer, strlen(header_buffer));
 
 	fd = open(element_in_first_line[PATH], O_RDONLY);
@@ -223,6 +232,8 @@ void *request_handler(void *arg){
 	buffer = malloc(sizeof(char) * fsize);
 	compressed_buffer = malloc(sizeof(char) * fsize);
 
+	memset(buffer, 0, fsize * sizeof(char));
+	memset(compressed_buffer, 0, fsize * sizeof(char));
 	//debug
 /*
 	printf("fsize: %d\n", fsize);
@@ -232,21 +243,32 @@ void *request_handler(void *arg){
 	debug_fd = open(debug_fname, O_CREAT|O_RDWR, 0644);
 */
 	while(1){
-
 		r_bytes = read(fd, buffer, fsize);	
 
-		if(get_compressed_buffer(r_bytes, buffer, compressed_buffer) < 0){
+		if(r_bytes <= 0) {
+			break;
+		}
+/*
+		else if(check_content_type(element_in_first_line[PATH], exts) == 0){
+			printf("r_bytes: %d\n", r_bytes);
+			write(socket_fd.clifd, buffer, r_bytes);
+
+			//debug
+			write(debug_fd, buffer, r_bytes);
+
+			continue;
+		}
+*/		
+
+		if((compressed_r_bytes = get_compressed_buffer(r_bytes, buffer, compressed_buffer)) < 0){
 			exit(0);
 		}
 
 		//debug
-		//write(debug_fd, compressed_buffer, compressed_r_bytes);
-
-		if(r_bytes <= 0) {
-			break;
-		}else{
-			write(socket_fd.clifd, compressed_buffer, r_bytes);
-		}
+		//write(debug_fd, compressed_buffer, strlen(compressed_buffer));
+		//printf("compressed_buffer: %s\n", compressed_buffer);
+		if(fsize > 40960) r_bytes = compressed_r_bytes;
+		compressed_r_bytes = write(socket_fd.clifd, compressed_buffer, r_bytes);
 		
 	}
 
