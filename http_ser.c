@@ -9,17 +9,16 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <zlib.h>
+#include <time.h>
 
 
 #define BUFFER_SIZE		512
 #define REQUEST_SIZE	256
-#define HTTP_PORT		80
 #define PORT            12345
 #define Q_LIMIT			16
 #define METHOD			0
 #define PATH			1
 #define HTTP_VER		2
-#define NUM_THREADS		5
 
 //reference: http://fred-zone.blogspot.hk/2007/09/http-web-server.html
 struct extensions{
@@ -50,7 +49,7 @@ struct Socket_fd{
 void get_request_first_line(int clifd, char *request){
 	char *buffer, *token;
 	buffer = malloc(sizeof(char) * (REQUEST_SIZE + 1));
-	memset(buffer, 0, REQUEST_SIZE);	
+	memset(buffer, 0, REQUEST_SIZE + 1);	
 
 	if(read(clifd, buffer, REQUEST_SIZE) < 0){
 		printf("Error in read request\n");
@@ -64,7 +63,10 @@ void get_request_first_line(int clifd, char *request){
 
 	strcpy(request, buffer);
 
+
 	free(buffer);
+
+
 }
 
 
@@ -75,9 +77,13 @@ void pharsing_request_first_line(char *request, char **element_in_first_line){
 	token = strtok(request, " ");
 
 	while(token != NULL){
+
+
 		element_in_first_line[i] = malloc((strlen(token) + 1) * sizeof(char));
+		memset(element_in_first_line[i], 0, (strlen(token) + 1) * sizeof(char));
 		
-		strcpy(element_in_first_line[i++], token);
+		strcpy(element_in_first_line[i], token);
+		i++;
 		token = strtok(NULL, " ");
 	}
 
@@ -88,7 +94,6 @@ int check_request_status(char **element_in_first_line){
 	if(access(element_in_first_line[PATH], F_OK) == -1) return -1;
 	if((strcmp(element_in_first_line[HTTP_VER], "HTTP/1.1") != 0) &&
 		(strcmp(element_in_first_line[HTTP_VER], "HTTP/1.0") != 0)) return -1;
-
 
 	return 0;
 }
@@ -118,9 +123,8 @@ int get_content_length(char *fname, char *tmp_buf){
 }
 
 void get_HTTP_header(char **element_in_first_line, char *buffer){
-	char *tmp_buf;
-	tmp_buf = malloc(sizeof(char) * 64);
-	memset(tmp_buf, 0, 64);
+	char tmp_buf[256] = {0};
+	
 
 	//HTTP status
 	strcat(buffer, element_in_first_line[HTTP_VER]);
@@ -131,10 +135,14 @@ void get_HTTP_header(char **element_in_first_line, char *buffer){
 		strcpy(element_in_first_line[PATH], "project_web/not_found.html");
 	}
 
+
+
 	//Content-type:
 	strcat(buffer, "Content-type: ");
 	strcat(buffer, exts[check_content_type(element_in_first_line[PATH], exts)].filetype);
 	strcat(buffer, "\r\n");
+
+
 
 	//Content-Length:
 	strcat(buffer, "Content-Length: ");
@@ -142,14 +150,16 @@ void get_HTTP_header(char **element_in_first_line, char *buffer){
 	strcat(buffer, tmp_buf);
 	strcat(buffer, "\r\n");
 
+
 	//Connection
 	strcat(buffer, "Connection: keep-alive\r\n");
+
 
 	//gzip
 	strcat(buffer, "Content-Encoding: gzip\r\n");
 
 	strcat(buffer, "\r\n");
-	free(tmp_buf);
+
 }
 
 int get_compressed_file(int r_bytes, char *uncompressed_buffer, char* fname){
@@ -159,25 +169,23 @@ int get_compressed_file(int r_bytes, char *uncompressed_buffer, char* fname){
 		return -1;
 	}
 
+
 	if(gzwrite(output, uncompressed_buffer, r_bytes) == 0 && r_bytes != 0){
 		printf("Error in gzwrite.\n");
 		return -1;
 	}
 
+
 	gzclose(output);
+
 	return 0;
 }
 
 int get_compressed_buffer(int r_bytes, char *uncompressed_buffer, char *compressed_buffer){
 	int fd, new_r_bytes;
 
-
 	char gz_fname[32];
 	sprintf(gz_fname, "tmp_%d.gz",  (int)pthread_self());
-	
-
-
-
 
 	if(get_compressed_file(r_bytes, uncompressed_buffer, gz_fname) != 0){
 		return -1;
@@ -196,11 +204,74 @@ int get_compressed_buffer(int r_bytes, char *uncompressed_buffer, char *compress
 
 	close(fd);
 	remove(gz_fname);
+
 	return new_r_bytes;
 }
 
+int get_random_num(int fsize){
+	if(fsize <= 0)return -1;
+
+	const int RAN_MAX = fsize / 2;
+	int res;
+
+	srand(time(NULL));
+	return res = 10 + (rand() % RAN_MAX);
+}
+
+int get_chunked_buffer(char *chunked_buffer, char *uncompressed_buffer, int chunked_size, int total_sent_bytes, int fsize){
+	if(total_sent_bytes == fsize) return -1;
+
+	if(fsize < total_sent_bytes + chunked_size) chunked_size = fsize - total_sent_bytes;
+
+	strncpy(chunked_buffer, &uncompressed_buffer[total_sent_bytes], chunked_size);
+
+	return total_sent_bytes + chunked_size;
+}
+
+void chunked_transfer(char *uncompressed_buffer, int fsize, int clifd){
+	int chunked_size, w_bytes, total_sent_bytes = 0;
+	char *compressed_chunked_buffer, *chunked_buffer, *tmp_buffer;
+
+	while(1){
+		//get random number < sending buffer
+		if((chunked_size = get_random_num(fsize)) == -1){
+			printf("Error in chunked size.\n");
+			exit(0);
+		}
+
+		compressed_chunked_buffer = malloc(sizeof(char) * chunked_size * 2);
+		chunked_buffer = malloc(sizeof(char) * chunked_size * 2);
+		tmp_buffer = malloc(size(char) * (1 + chunked_size));
+
+		memset(compressed_chunked_buffer, 0,  chunked_size * 2);
+		memset(chunked_buffer, 0, chunked_size * 2);
+		memset(tmp_buffer, 0, 1 + chunked_size);
+
+
+		//copy the string from the previous end pt in compressed_buffer to the pos of random number
+		if((total_sent_bytes = get_chunked_buffer(tmp_buffer, uncompressed_buffer, chunked_buffer, total_sent_bytes) == -1){
+			return;
+		}
+		//modify the the string and send
+		sprintf(chunked_buffer, "%X\r\n", chunked_size);
+		strcat(chunked_buffer, tmp_buffer);
+		strcat(chunked_buffer, "\r\n");
+
+		if((w_bytes = get_compressed_buffer(strlen(chunked_buffer), chunked_buffer, compressed_chunked_buffer)) == -1){
+			exit(0);
+		}
+		
+		write(clifd, compressed_chunked_buffer, w_bytes);
+
+		free(compressed_chunked_buffer);
+		free(chunked_buffer);
+		free(tmp_buffer);
+	}
+
+}
+
 void *request_handler(void *arg){
-	char request[REQUEST_SIZE], header_buffer[BUFFER_SIZE];
+	char *request, *header_buffer;
 	char *buffer, *compressed_buffer;
 	char *element_in_first_line[3];
 	int i, fd, r_bytes, compressed_r_bytes, fsize;
@@ -208,9 +279,11 @@ void *request_handler(void *arg){
 	socket_fd.servfd = ((struct Socket_fd*)arg)->servfd;
 	socket_fd.clifd = ((struct Socket_fd*)arg)->clifd;
 
-	//debug
-	int debug_fd;
-	char *debug_fname;
+	request = malloc(sizeof(char) * (REQUEST_SIZE + 1));
+	header_buffer = malloc(sizeof(char) * (BUFFER_SIZE + 1));
+	memset(request, 0, sizeof(char) * (REQUEST_SIZE + 1));
+	memset(header_buffer, 0, sizeof(char) * (BUFFER_SIZE+ 1));
+
 
 	//Get request
 	get_request_first_line(socket_fd.clifd, request);
@@ -221,12 +294,11 @@ void *request_handler(void *arg){
 	//do sth based on process result
 	get_HTTP_header(element_in_first_line, header_buffer);
 
-	//debug
-	//printf("%s\n", header_buffer);
+
 
 	//send back client
-	//if(check_content_type(element_in_first_line[PATH], exts) != 0)
 	write(socket_fd.clifd, header_buffer, strlen(header_buffer));
+
 
 	fd = open(element_in_first_line[PATH], O_RDONLY);
 
@@ -234,33 +306,28 @@ void *request_handler(void *arg){
 	buffer = malloc(sizeof(char) * (1 + fsize));
 	compressed_buffer = malloc(sizeof(char) * (1 + fsize));
 
-	memset(buffer, 0, fsize * sizeof(char));
-	memset(compressed_buffer, 0, fsize * sizeof(char));
-	//debug
-/*
-	printf("fsize: %d\n", fsize);
+	memset(buffer, 0, (1 + fsize) * sizeof(char));
+	memset(compressed_buffer, 0, (1 + fsize) * sizeof(char));
 
-	debug_fname = strrchr(element_in_first_line[PATH], '/');
-	printf("debug_fname: %s\n", ++debug_fname);
-	debug_fd = open(debug_fname, O_CREAT|O_RDWR, 0644);
-*/
+
 	while(1){
+
 		r_bytes = read(fd, buffer, fsize);	
 
 		if(r_bytes <= 0) {
 			break;
 		}
 
+
 		if((compressed_r_bytes = get_compressed_buffer(r_bytes, buffer, compressed_buffer)) < 0){
 			exit(0);
 		}
 
-		//debug
-		//write(debug_fd, compressed_buffer, strlen(compressed_buffer));
-		//printf("compressed_buffer: %s\n", compressed_buffer);
+
 
 		if(fsize > 40960) r_bytes = compressed_r_bytes;
 		compressed_r_bytes = write(socket_fd.clifd, compressed_buffer, r_bytes);
+
 	}
 
 
@@ -271,12 +338,14 @@ void *request_handler(void *arg){
 	free(arg);
 	free(buffer);
 	free(compressed_buffer);
+	free(request);
+	free(header_buffer);
+/*
 	for(i = 0; i < 3; i++){
 		free(element_in_first_line[i]);
 	}
-	
-
-	pthread_exit(0);
+*/	
+	pthread_detach(pthread_self());
 }
 
 
@@ -286,6 +355,7 @@ int main(){
 	struct sockaddr_in servaddr, cliaddr;
 	socklen_t len = sizeof(struct sockaddr_in);
 	pthread_t thread;
+	int i = 0;
 
 
 	if((socket_fd.servfd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
@@ -318,8 +388,6 @@ int main(){
 		}
 
 		*socket_fd_ptr = socket_fd;
-
-
 
 		if(pthread_create(&thread, NULL, request_handler, (void *)socket_fd_ptr) != 0){
 			printf("ERROR: pthread_create\n");
